@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GoChatX Demo</title>
+<style>
+#log { width: 95%; height: 300px; border:1px solid #ccc; overflow:auto; padding:6px; }
+</style>
+</head>
+<body>
+<h3>GoChatX Demo</h3>
+<div>
+  UserID (for dev if no auth): <input id="user" value="user_1"/>
+  Token (if you have auth): <input id="token" style="width:400px"/>
+  <button id="connect">Connect</button>
+</div>
+<div>
+  Room: <input id="room" value="room_lobby"/>
+  <button id="join">Join</button>
+  <button id="leave">Leave</button>
+</div>
+<div>
+  Message: <input id="msg" style="width:400px"/>
+  To (optional): <input id="to" placeholder="userID"/>
+  <button id="send">Send</button>
+</div>
+<div>
+  <button id="history">History</button>
+</div>
+<div id="log"></div>
+
+<script>
+let ws = null;
+function log(s){ document.getElementById('log').innerHTML += s + "<br/>"; document.getElementById('log').scrollTop = 1e9; }
+
+document.getElementById('connect').onclick = () => {
+  const token = document.getElementById('token').value;
+  ws = new WebSocket("ws://" + location.host + "/ws");
+  ws.onopen = () => { log("ws open"); if(token){ ws.send(JSON.stringify({type:"auth", token: token})); } else { const uid=document.getElementById('user').value; ws.send(JSON.stringify({type:"auth", token:uid})); } };
+  ws.onmessage = e => { log("[recv] " + e.data); }
+  ws.onclose = () => log("ws closed");
+};
+
+document.getElementById('join').onclick = () => {
+  const room = document.getElementById('room').value;
+  ws.send(JSON.stringify({type:"join", room_id: room}));
+};
+
+document.getElementById('leave').onclick = () => {
+  const room = document.getElementById('room').value;
+  ws.send(JSON.stringify({type:"leave", room_id: room}));
+};
+
+document.getElementById('send').onclick = () => {
+  const room = document.getElementById('room').value;
+  const msg = document.getElementById('msg').value;
+  const to = document.getElementById('to').value;
+  if(to) {
+    ws.send(JSON.stringify({type:"private", to: to, content: msg}));
+  } else {
+    ws.send(JSON.stringify({type:"send", room_id: room, content: msg}));
+  }
+};
+
+document.getElementById('history').onclick = () => {
+  const room = document.getElementById('room').value;
+  ws.send(JSON.stringify({type:"history", room_id: room, limit:50}));
+};
+</script>
+</body>
+</html>
