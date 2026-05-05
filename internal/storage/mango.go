@@ -2,14 +2,14 @@ package storage
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"time"
 
 	mango "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// 聊天消息结构体，支持群聊和私聊
+// ChatMessage represents a chat message supporting group and private chat.
 type ChatMessage struct {
 	ID        string    `bson:"_id"`
 	From      string    `bson:"from"`
@@ -25,24 +25,34 @@ type MangoStore struct {
 	Collection *mango.Collection
 }
 
-func NewMangoStore(uri, dbName string) *MangoStore {
-	client, err := mango.NewClient(options.Client().ApplyURI(uri))
+func NewMangoStore(uri, dbName string) (*MangoStore, error) {
+	client, err := mango.Connect(context.Background(), options.Client().ApplyURI(uri).
+		SetConnectTimeout(10*time.Second).
+		SetServerSelectionTimeout(5*time.Second))
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("mongo connect: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if err := client.Ping(ctx, nil); err != nil {
+		return nil, fmt.Errorf("mongo ping: %w", err)
 	}
 
 	return &MangoStore{
 		Client:     client,
 		Collection: client.Database(dbName).Collection("messages"),
-	}
+	}, nil
 }
 
-// 保存消息（指针参数）
+// Close disconnects from MongoDB.
+func (ms *MangoStore) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return ms.Client.Disconnect(ctx)
+}
+
+// SaveMessage persists a chat message.
 func (ms *MangoStore) SaveMessage(msg *ChatMessage) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -50,15 +60,19 @@ func (ms *MangoStore) SaveMessage(msg *ChatMessage) error {
 	return err
 }
 
-// 查询房间历史消息
+// QueryHistory returns recent room messages.
 func (ms *MangoStore) QueryHistory(roomID string, limit int64) ([]*ChatMessage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cur, err := ms.Collection.Find(ctx, map[string]any{"room_id": roomID}, options.Find().SetSort(map[string]int{"timestamp": -1}).SetLimit(limit))
+	cur, err := ms.Collection.Find(ctx,
+		map[string]any{"room_id": roomID},
+		options.Find().SetSort(map[string]int{"timestamp": -1}).SetLimit(limit),
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer cur.Close(ctx)
+
 	var msgs []*ChatMessage
 	for cur.Next(ctx) {
 		var m ChatMessage
@@ -69,16 +83,18 @@ func (ms *MangoStore) QueryHistory(roomID string, limit int64) ([]*ChatMessage, 
 	return msgs, nil
 }
 
-// 拉取未送达私聊消息
+// PullUndeliveredForUser fetches and marks delivered private messages for a user.
 func (ms *MangoStore) PullUndeliveredForUser(userID string) ([]*ChatMessage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	filter := map[string]any{"to": userID, "delivered": false}
 	cur, err := ms.Collection.Find(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 	defer cur.Close(ctx)
+
 	var msgs []*ChatMessage
 	for cur.Next(ctx) {
 		var m ChatMessage
@@ -86,7 +102,10 @@ func (ms *MangoStore) PullUndeliveredForUser(userID string) ([]*ChatMessage, err
 			msgs = append(msgs, &m)
 		}
 	}
-	// 标记为已送达
-	_, _ = ms.Collection.UpdateMany(ctx, filter, map[string]any{"$set": map[string]any{"delivered": true}})
+
+	// mark as delivered
+	_, _ = ms.Collection.UpdateMany(ctx, filter,
+		map[string]any{"$set": map[string]any{"delivered": true}})
+
 	return msgs, nil
 }

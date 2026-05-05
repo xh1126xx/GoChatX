@@ -5,6 +5,9 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,57 +40,86 @@ func main() {
 
 	loadConfig(*cfg)
 
-	// optional connect to auth svc
+	// connect to auth service
 	authAddr := viper.GetString("authsvc.addr")
 	var authConn *grpc.ClientConn
 	if authAddr != "" {
-		ctx, cancel := contextWithTimeout(3 * time.Second)
-		conn, err := grpc.DialContext(ctx, authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		conn, err := grpc.DialContext(ctx, authAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithBlock(),
+		)
 		cancel()
 		if err != nil {
-			log.Printf("warning: can't connect to auth svc %s: %v (fall back to token-as-userID mode)", authAddr, err)
+			log.Printf("warning: can't connect to auth service %s: %v (fall back to token-as-userID mode)", authAddr, err)
 			authConn = nil
 		} else {
 			authConn = conn
+			defer conn.Close()
 			log.Println("connected to auth service", authAddr)
 		}
 	}
 
+	// connect to MongoDB
 	var mongoStore *storage.MangoStore
 	mongoURI := viper.GetString("mongo.uri")
 	mongoDB := viper.GetString("mongo.db")
 	if mongoURI != "" {
-		mongoStore = storage.NewMangoStore(mongoURI, mongoDB)
+		var err error
+		mongoStore, err = storage.NewMangoStore(mongoURI, mongoDB)
+		if err != nil {
+			log.Printf("warning: can't connect to mongo: %v (message persistence disabled)", err)
+			mongoStore = nil
+		} else {
+			defer mongoStore.Close()
+		}
 	}
 
-	// init redis
+	// connect to Redis
 	var rdb *redis.Client
 	redisAddr := viper.GetString("redis.addr")
 	if redisAddr != "" {
 		rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
-		// quick ping
-		pctx, pcancel := contextWithTimeout(2 * time.Second)
+		pctx, pcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if err := rdb.Ping(pctx).Err(); err != nil {
 			log.Printf("warning: redis ping failed: %v (continuing)", err)
 		}
 		pcancel()
+		if rdb != nil {
+			defer rdb.Close()
+		}
 	}
 
 	// gateway server
 	gw := gateway.NewGatewayServer(authConn, mongoStore, rdb)
 
-	// serve static web and ws
-	http.HandleFunc("/ws", gw.HandleWS)
-	http.Handle("/", http.FileServer(http.Dir("./web")))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", gw.HandleWS)
+	mux.Handle("/", http.FileServer(http.Dir("./web")))
 
 	addr := viper.GetString("gateway.listen")
-	log.Println("Gateway listening on", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
 	}
-}
 
-// helper context with timeout
-func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), d)
+	// graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		log.Println("shutting down gateway...")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("gateway shutdown error: %v", err)
+		}
+	}()
+
+	log.Println("Gateway listening on", addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("gateway failed: %v", err)
+	}
+	log.Println("gateway stopped")
 }

@@ -1,0 +1,18 @@
+# GoChatX configuration
+
+authsvc:
+  addr: "localhost:50051"  # gRPC address of auth service
+
+mongo:
+  uri: "mongodb://127.0.0.1:27017"
+  db: "gochatx"
+
+redis:
+  addr: "127.0.0.1:6379"
+
+gateway:
+  listen: ":8080"
+
+db:
+  dsn: "root:123456@tcp(127.0.0.1:3306)/gochatx?parseTime=true"
+  driver: "mysql"
