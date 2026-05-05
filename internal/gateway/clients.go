@@ -44,3 +44,14 @@ func getOnlineClient(userID string) *Client {
 func (c *Client) touch() {
 	c.lastSeen = time.Now().UnixMilli()
 }
+
+// GetOnlineUsers returns all currently online user IDs.
+func GetOnlineUsers() []string {
+	onlineUsersMu.RLock()
+	defer onlineUsersMu.RUnlock()
+	ids := make([]string, 0, len(onlineUsers))
+	for id := range onlineUsers {
+		ids = append(ids, id)
+	}
+	return ids
+}

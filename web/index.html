@@ -1,71 +1,71 @@
 <!doctype html>
-<html>
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>GoChatX Demo</title>
-<style>
-#log { width: 95%; height: 300px; border:1px solid #ccc; overflow:auto; padding:6px; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoChatX</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<h3>GoChatX Demo</h3>
-<div>
-  UserID (for dev if no auth): <input id="user" value="user_1"/>
-  Token (if you have auth): <input id="token" style="width:400px"/>
-  <button id="connect">Connect</button>
+
+<!-- Auth View -->
+<div id="auth-view" class="auth-container">
+  <div class="auth-card">
+    <h1>GoChatX</h1>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">登录</button>
+      <button class="auth-tab" data-tab="register">注册</button>
+    </div>
+    <form id="login-form" class="auth-form">
+      <input type="text" name="username" placeholder="用户名" autocomplete="username" required>
+      <input type="password" name="password" placeholder="密码" autocomplete="current-password" required>
+      <button type="submit">登录</button>
+      <p class="auth-hint dev-hint" style="display:none">开发模式：直接填 UserID 即可登录</p>
+    </form>
+    <form id="register-form" class="auth-form" style="display:none">
+      <input type="text" name="username" placeholder="用户名" autocomplete="username" required minlength="2">
+      <input type="password" name="password" placeholder="密码" autocomplete="new-password" required minlength="4">
+      <button type="submit">注册</button>
+    </form>
+    <p id="auth-msg" class="auth-msg"></p>
+  </div>
 </div>
-<div>
-  Room: <input id="room" value="room_lobby"/>
-  <button id="join">Join</button>
-  <button id="leave">Leave</button>
+
+<!-- Chat View -->
+<div id="chat-view" style="display:none">
+  <div class="sidebar">
+    <div class="sidebar-user">
+      <span class="user-badge"></span>
+      <strong id="self-id"></strong>
+      <button id="logout-btn" title="退出">×</button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header">房间</div>
+      <div class="room-list" id="room-list"></div>
+      <div class="room-join">
+        <input type="text" id="room-input" placeholder="房间名回车加入">
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header">在线用户 <span id="online-count">0</span></div>
+      <div class="user-list" id="user-list"></div>
+    </div>
+  </div>
+
+  <div class="main-panel">
+    <div class="chat-header" id="chat-header">欢迎来到 GoChatX</div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="empty-hint">选择一个房间加入，或点击在线用户开始私聊</div>
+    </div>
+    <div class="chat-input">
+      <input type="text" id="msg-input" placeholder="输入消息，回车发送..." autofocus>
+      <button id="send-btn">发送</button>
+    </div>
+  </div>
 </div>
-<div>
-  Message: <input id="msg" style="width:400px"/>
-  To (optional): <input id="to" placeholder="userID"/>
-  <button id="send">Send</button>
-</div>
-<div>
-  <button id="history">History</button>
-</div>
-<div id="log"></div>
 
-<script>
-let ws = null;
-function log(s){ document.getElementById('log').innerHTML += s + "<br/>"; document.getElementById('log').scrollTop = 1e9; }
-
-document.getElementById('connect').onclick = () => {
-  const token = document.getElementById('token').value;
-  ws = new WebSocket("ws://" + location.host + "/ws");
-  ws.onopen = () => { log("ws open"); if(token){ ws.send(JSON.stringify({type:"auth", token: token})); } else { const uid=document.getElementById('user').value; ws.send(JSON.stringify({type:"auth", token:uid})); } };
-  ws.onmessage = e => { log("[recv] " + e.data); }
-  ws.onclose = () => log("ws closed");
-};
-
-document.getElementById('join').onclick = () => {
-  const room = document.getElementById('room').value;
-  ws.send(JSON.stringify({type:"join", room_id: room}));
-};
-
-document.getElementById('leave').onclick = () => {
-  const room = document.getElementById('room').value;
-  ws.send(JSON.stringify({type:"leave", room_id: room}));
-};
-
-document.getElementById('send').onclick = () => {
-  const room = document.getElementById('room').value;
-  const msg = document.getElementById('msg').value;
-  const to = document.getElementById('to').value;
-  if(to) {
-    ws.send(JSON.stringify({type:"private", to: to, content: msg}));
-  } else {
-    ws.send(JSON.stringify({type:"send", room_id: room, content: msg}));
-  }
-};
-
-document.getElementById('history').onclick = () => {
-  const room = document.getElementById('room').value;
-  ws.send(JSON.stringify({type:"history", room_id: room, limit:50}));
-};
-</script>
+<script src="/app.js"></script>
 </body>
 </html>

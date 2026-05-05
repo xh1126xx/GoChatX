@@ -92,9 +92,13 @@ func main() {
 
 	// gateway server
 	gw := gateway.NewGatewayServer(authConn, mongoStore, rdb)
+	rest := gateway.NewRESTHandler(authConn, rdb)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWS)
+	mux.HandleFunc("/api/register", rest.Register)
+	mux.HandleFunc("/api/login", rest.Login)
+	mux.HandleFunc("/api/users/online", rest.OnlineUsers)
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 
 	addr := viper.GetString("gateway.listen")
