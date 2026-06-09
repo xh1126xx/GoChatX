@@ -6,7 +6,7 @@ services:
     container_name: gochatx-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
       MYSQL_DATABASE: "gochatx"
     ports:
       - "3306:3306"
@@ -26,6 +26,7 @@ services:
     image: redis:7-alpine
     container_name: gochatx-redis
     restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme}
     ports:
       - "6379:6379"
 

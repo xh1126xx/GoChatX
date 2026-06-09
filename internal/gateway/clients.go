@@ -2,22 +2,23 @@ package gateway
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// Client 代表一个 websocket 连接（已认证 user）
+// Client represents an authenticated WebSocket connection.
 type Client struct {
 	UserID string
 	Conn   *websocket.Conn
 	Send   chan []byte
-	// last heartbeat timestamp (unix ms)
-	lastSeen int64
+	// last heartbeat timestamp (unix ms), use atomic for thread safety
+	lastSeen atomic.Int64
 }
 
 var (
-	onlineUsers   = make(map[string]*Client) // userID -> client
+	onlineUsers   = make(map[string]*Client)
 	onlineUsersMu sync.RWMutex
 )
 
@@ -40,9 +41,9 @@ func getOnlineClient(userID string) *Client {
 	return c
 }
 
-// 更新心跳
+// touch updates the last heartbeat timestamp atomically.
 func (c *Client) touch() {
-	c.lastSeen = time.Now().UnixMilli()
+	c.lastSeen.Store(time.Now().UnixMilli())
 }
 
 // GetOnlineUsers returns all currently online user IDs.

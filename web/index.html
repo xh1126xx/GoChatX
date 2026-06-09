@@ -54,13 +54,18 @@
     </div>
   </div>
 
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
   <div class="main-panel">
-    <div class="chat-header" id="chat-header">欢迎来到 GoChatX</div>
+    <div class="chat-header" id="chat-header">
+      <button class="menu-btn" id="menu-btn">☰</button>
+      <span id="chat-header-text">欢迎来到 GoChatX</span>
+    </div>
     <div class="chat-messages" id="chat-messages">
       <div class="empty-hint">选择一个房间加入，或点击在线用户开始私聊</div>
     </div>
     <div class="chat-input">
-      <input type="text" id="msg-input" placeholder="输入消息，回车发送..." autofocus>
+      <textarea id="msg-input" placeholder="输入消息，Enter 发送，Shift+Enter 换行..." rows="1" maxlength="2000"></textarea>
       <button id="send-btn">发送</button>
     </div>
   </div>

@@ -3,8 +3,12 @@ let ws = null;
 let token = null;
 let selfId = null;
 let currentRoom = null;
-let currentPrivate = null; // user ID for private chat
+let currentPrivate = null;
 let joinedRooms = new Set();
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+let reconnectTimer = null;
+let pingTimer = null;
 
 // ── DOM refs ──
 const $authView = document.getElementById('auth-view');
@@ -17,6 +21,7 @@ const $roomList = document.getElementById('room-list');
 const $userList = document.getElementById('user-list');
 const $onlineCount = document.getElementById('online-count');
 const $chatHeader = document.getElementById('chat-header');
+const $chatHeaderText = document.getElementById('chat-header-text');
 const $chatMessages = document.getElementById('chat-messages');
 const $msgInput = document.getElementById('msg-input');
 const $sendBtn = document.getElementById('send-btn');
@@ -43,7 +48,6 @@ $loginForm.onsubmit = async (e) => {
   const password = fd.get('password').trim();
   if (!username) return;
 
-  // Try REST API first
   try {
     const res = await fetch('/api/login', {
       method: 'POST',
@@ -54,7 +58,6 @@ $loginForm.onsubmit = async (e) => {
     if (data.ok && data.token) {
       token = data.token;
     } else {
-      // fallback: dev mode (no auth service)
       if (data.msg && data.msg.includes('unavailable')) {
         token = null;
       } else {
@@ -62,12 +65,10 @@ $loginForm.onsubmit = async (e) => {
         return;
       }
     }
-  } catch (err) {
-    // Server not reachable or no REST endpoint; try dev mode
+  } catch {
     token = null;
   }
 
-  // If no token, show dev hint and use username as token
   if (!token) {
     $devHint.style.display = '';
   }
@@ -103,10 +104,26 @@ $registerForm.onsubmit = async (e) => {
 
 // ── WebSocket ──
 function connectWS(username) {
+  // Close existing connection before creating a new one
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+    ws = null;
+  }
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
 
+  // Connection timeout (10s)
+  const connectTimeout = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    }
+  }, 10000);
+
   ws.onopen = () => {
+    clearTimeout(connectTimeout);
+    reconnectAttempts = 0;
     const authToken = token || username;
     ws.send(JSON.stringify({ type: 'auth', token: authToken }));
   };
@@ -118,11 +135,30 @@ function connectWS(username) {
     } catch { /* ignore malformed */ }
   };
 
-  ws.onclose = () => {
-    if (selfId) {
-      addSystemMsg('连接断开，3秒后自动重连...');
-      setTimeout(() => { if (!selfId) return; connectWS(username); }, 3000);
+  ws.onclose = (e) => {
+    clearTimeout(connectTimeout);
+    if (!selfId) return;
+
+    // Don't reconnect on auth failure (code 4001) or normal closure
+    if (e.code === 4001 || e.code === 1000) return;
+
+    reconnectAttempts++;
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      addSystemMsg('重连次数过多，请手动刷新页面');
+      return;
     }
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+    addSystemMsg(`连接断开，${Math.round(delay / 1000)}秒后自动重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    reconnectTimer = setTimeout(() => {
+      if (!selfId) return;
+      connectWS(username);
+    }, delay);
+  };
+
+  ws.onerror = () => {
+    // onerror is followed by onclose, which handles reconnection
   };
 }
 
@@ -149,7 +185,7 @@ function handleMessage(msg) {
       currentPrivate = null;
       joinedRooms.add(currentRoom);
       renderRooms();
-      $chatHeader.textContent = '#' + currentRoom;
+      $chatHeaderText.textContent = '#' + currentRoom;
       $chatMessages.innerHTML = '';
       addSystemMsg('已加入 ' + currentRoom);
       if (msg.data.history && msg.data.history.length) {
@@ -163,7 +199,7 @@ function handleMessage(msg) {
       joinedRooms.delete(msg.data);
       if (currentRoom === msg.data) {
         currentRoom = null;
-        $chatHeader.textContent = '欢迎来到 GoChatX';
+        $chatHeaderText.textContent = '欢迎来到 GoChatX';
       }
       renderRooms();
       addSystemMsg('已离开 ' + msg.data);
@@ -187,7 +223,6 @@ function handleMessage(msg) {
       break;
 
     case 'ack':
-      // private message sent confirmation
       break;
 
     case 'pong':
@@ -241,7 +276,17 @@ function renderRooms() {
   joinedRooms.forEach(room => {
     const div = document.createElement('div');
     div.className = 'room-item' + (room === currentRoom && !currentPrivate ? ' active' : '');
-    div.innerHTML = '<span class="dot"></span>' + room + '<span class="leave-x">×</span>';
+    // Use textContent for room name to prevent XSS
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = room;
+    const leaveBtn = document.createElement('span');
+    leaveBtn.className = 'leave-x';
+    leaveBtn.textContent = '×';
+    div.appendChild(dot);
+    div.appendChild(nameSpan);
+    div.appendChild(leaveBtn);
     div.onclick = (e) => {
       if (e.target.classList.contains('leave-x')) {
         send({ type: 'leave', room_id: room });
@@ -257,7 +302,7 @@ function switchRoom(room) {
   if (currentRoom === room && !currentPrivate) return;
   currentRoom = room;
   currentPrivate = null;
-  $chatHeader.textContent = '#' + room;
+  $chatHeaderText.textContent = '#' + room;
   $chatMessages.innerHTML = '';
   send({ type: 'history', room_id: room, limit: 50 });
   highlightActive();
@@ -273,7 +318,6 @@ function refreshOnlineUsers() {
       }
     })
     .catch(() => {
-      // fallback: empty list
       renderUsers([]);
     });
 }
@@ -285,7 +329,13 @@ function renderUsers(users) {
   others.forEach(user => {
     const div = document.createElement('div');
     div.className = 'user-item' + (user === currentPrivate ? ' active' : '');
-    div.innerHTML = '<span class="dot"></span>' + user;
+    // Use textContent for username to prevent XSS
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = user;
+    div.appendChild(dot);
+    div.appendChild(nameSpan);
     div.onclick = () => startPrivate(user);
     $userList.appendChild(div);
   });
@@ -294,7 +344,7 @@ function renderUsers(users) {
 function startPrivate(user) {
   currentPrivate = user;
   currentRoom = null;
-  $chatHeader.textContent = '@' + user + ' (私聊)';
+  $chatHeaderText.textContent = '@' + user + ' (私聊)';
   $chatMessages.innerHTML = '';
   addSystemMsg('私聊中 — 消息不会广播到房间');
   highlightActive();
@@ -307,11 +357,17 @@ function addChatMsg(from, content, ts, isSelf, isPrivate) {
 
   const time = ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
 
+  // Escape both `from` and `content` to prevent XSS
   div.innerHTML =
-    '<div class="msg-meta">' + (isPrivate ? '@' : '') + from + (time ? ' ' + time : '') + '</div>' +
+    '<div class="msg-meta">' + (isPrivate ? '@' : '') + escapeHtml(from) + (time ? ' ' + time : '') + '</div>' +
     '<div class="msg-bubble">' + escapeHtml(content) + '</div>';
 
   $chatMessages.appendChild(div);
+
+  // Limit DOM nodes to 500 messages
+  while ($chatMessages.children.length > 500) {
+    $chatMessages.removeChild($chatMessages.firstChild);
+  }
 }
 
 function addSystemMsg(text) {
@@ -329,21 +385,25 @@ function scrollBottom() {
 
 function highlightActive() {
   document.querySelectorAll('.room-item').forEach(el => {
-    el.classList.toggle('active', el.textContent.replace('×', '').trim() === (currentPrivate ? '' : currentRoom));
+    const nameEl = el.querySelector('span:not(.dot):not(.leave-x)');
+    const name = nameEl ? nameEl.textContent : '';
+    el.classList.toggle('active', name === (currentPrivate ? '' : currentRoom));
   });
   document.querySelectorAll('.user-item').forEach(el => {
-    el.classList.toggle('active', el.textContent.trim() === currentPrivate);
+    const nameEl = el.querySelector('span:not(.dot)');
+    const name = nameEl ? nameEl.textContent : '';
+    el.classList.toggle('active', name === currentPrivate);
   });
 }
 
 function escapeHtml(s) {
+  if (s == null) return '';
   const d = document.createElement('div');
-  d.textContent = s;
+  d.textContent = String(s);
   return d.innerHTML;
 }
 
 // ── Heartbeat ──
-let pingTimer = null;
 function startPing() {
   if (pingTimer) clearInterval(pingTimer);
   pingTimer = setInterval(() => {
@@ -352,9 +412,38 @@ function startPing() {
   }, 15000);
 }
 
+// ── Textarea auto-resize ──
+$msgInput.addEventListener('input', () => {
+  $msgInput.style.height = 'auto';
+  $msgInput.style.height = Math.min($msgInput.scrollHeight, 120) + 'px';
+});
+
+// ── Mobile sidebar toggle ──
+const $menuBtn = document.getElementById('menu-btn');
+const $sidebar = document.querySelector('.sidebar');
+const $overlay = document.getElementById('sidebar-overlay');
+
+if ($menuBtn) {
+  $menuBtn.onclick = () => {
+    $sidebar.classList.toggle('open');
+    $overlay.classList.toggle('open');
+  };
+}
+if ($overlay) {
+  $overlay.onclick = () => {
+    $sidebar.classList.remove('open');
+    $overlay.classList.remove('open');
+  };
+}
+
 // ── Logout ──
 $logoutBtn.onclick = () => {
-  if (ws) ws.close();
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectAttempts = 0;
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+  }
   ws = null;
   selfId = null;
   currentRoom = null;

@@ -33,8 +33,10 @@ func initDB(dsn string) *sql.DB {
 		log.Fatalf("failed to ping database: %v", err)
 	}
 
-	// auto-migrate: create users table if not exists
-	migrate(ctx, db)
+	// auto-migrate with separate context
+	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer migrateCancel()
+	migrate(migrateCtx, db)
 
 	log.Println("database connected")
 	return db
@@ -64,10 +66,16 @@ func initRedis(addr string) *redis.Client {
 }
 
 func main() {
-	dsn := getEnvOrDefault("DB_DSN", "root:123456@tcp(127.0.0.1:3306)/gochatx?parseTime=true")
+	dsn := os.Getenv("DB_DSN")
+	if dsn == "" {
+		log.Fatal("DB_DSN environment variable is required")
+	}
 	redisAddr := getEnvOrDefault("REDIS_ADDR", "127.0.0.1:6379")
 	listenAddr := getEnvOrDefault("LISTEN_ADDR", ":50051")
-	jwtSecret := getEnvOrDefault("JWT_SECRET", "supersecretkey")
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
 
 	db := initDB(dsn)
 	defer db.Close()

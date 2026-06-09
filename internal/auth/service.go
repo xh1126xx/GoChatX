@@ -3,11 +3,17 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/xh1126xx/gochatx/api"
 )
@@ -35,19 +41,36 @@ func checkPassword(hash, password string) bool {
 }
 
 func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	// Input validation
+	if len(req.Username) < 2 || len(req.Username) > 32 {
+		return &pb.RegisterResponse{Success: false, Message: "username must be 2-32 characters"}, nil
+	}
+	if len(req.Password) < 6 || len(req.Password) > 72 {
+		return &pb.RegisterResponse{Success: false, Message: "password must be 6-72 characters"}, nil
+	}
+
 	hashed, err := hashPassword(req.Password)
 	if err != nil {
-		return &pb.RegisterResponse{Success: false, Message: "internal error"}, nil
+		return nil, status.Error(codes.Internal, "failed to hash password")
 	}
 
 	_, err = s.DB.ExecContext(ctx, "INSERT INTO users (username, password) VALUES (?, ?)", req.Username, hashed)
 	if err != nil {
-		return &pb.RegisterResponse{Success: false, Message: "username already exists"}, nil
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return &pb.RegisterResponse{Success: false, Message: "username already exists"}, nil
+		}
+		return nil, status.Errorf(codes.Internal, "database error: %v", err)
 	}
 	return &pb.RegisterResponse{Success: true, Message: "Registration successful"}, nil
 }
 
 func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
+	// Input validation
+	if req.Username == "" || req.Password == "" {
+		return &pb.LoginResponse{Success: false, Message: "username and password required"}, nil
+	}
+
 	row := s.DB.QueryRowContext(ctx, "SELECT id, password FROM users WHERE username=?", req.Username)
 	var id, pw string
 	if err := row.Scan(&id, &pw); err != nil {
@@ -60,21 +83,30 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 	claims := Claims{
 		UserID: id,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "gochatx-auth",
+			Subject:   id,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token, err := t.SignedString(s.JWTSecret)
 	if err != nil {
-		return &pb.LoginResponse{Success: false, Message: "internal error"}, nil
+		return nil, status.Error(codes.Internal, "failed to sign token")
 	}
 
-	s.Redis.Set(ctx, "user:"+id+":online", "true", 24*time.Hour)
+	if err := s.Redis.Set(ctx, "user:"+id+":online", "true", 24*time.Hour).Err(); err != nil {
+		log.Printf("WARNING: failed to set online status for user %s: %v", id, err)
+	}
 	return &pb.LoginResponse{Success: true, Message: "Login successful", Token: token}, nil
 }
 
 func (s *AuthService) Validate(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
 	t, err := jwt.ParseWithClaims(req.Token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		// Verify signing algorithm to prevent alg:none attack
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return s.JWTSecret, nil
 	})
 	if err != nil {

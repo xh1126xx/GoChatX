@@ -82,7 +82,8 @@ func main() {
 		rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
 		pctx, pcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if err := rdb.Ping(pctx).Err(); err != nil {
-			log.Printf("warning: redis ping failed: %v (continuing)", err)
+			log.Printf("warning: redis ping failed: %v (continuing without redis)", err)
+			rdb = nil
 		}
 		pcancel()
 		if rdb != nil {
@@ -103,8 +104,12 @@ func main() {
 
 	addr := viper.GetString("gateway.listen")
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// graceful shutdown

@@ -1,41 +1,52 @@
 package gateway
 
 import (
+	"log"
 	"sync"
 )
 
+// Room represents a chat room with a set of clients.
 type Room struct {
 	ID      string
-	Clients map[string]*Client
+	clients map[string]*Client
 	mu      sync.RWMutex
 }
 
 func newRoom(id string) *Room {
 	return &Room{
 		ID:      id,
-		Clients: make(map[string]*Client),
+		clients: make(map[string]*Client),
 	}
 }
 
 func (r *Room) addClient(c *Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.Clients[c.UserID] = c
+	r.clients[c.UserID] = c
 }
 
 func (r *Room) removeClient(c *Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.Clients, c.UserID)
+	delete(r.clients, c.UserID)
+}
+
+// Contains reports whether the room has the given user.
+func (r *Room) Contains(userID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.clients[userID]
+	return ok
 }
 
 func (r *Room) broadcast(b []byte) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for _, c := range r.Clients {
+	for _, c := range r.clients {
 		select {
 		case c.Send <- b:
 		default:
+			log.Printf("WARNING: broadcast drop for user %s (channel full)", c.UserID)
 		}
 	}
 }
@@ -59,18 +70,18 @@ func getOrCreateRoom(roomID string) *Room {
 		r = newRoom(roomID)
 		rooms[roomID] = r
 	}
-
 	return r
 }
 
+// removeEmptyRoom atomically checks and removes an empty room under write lock.
 func removeEmptyRoom(roomID string) {
 	roomsMu.Lock()
 	defer roomsMu.Unlock()
 	r := rooms[roomID]
 	if r != nil {
-		r.mu.RLock()
-		n := len(r.Clients)
-		r.mu.RUnlock()
+		r.mu.Lock()
+		n := len(r.clients)
+		r.mu.Unlock()
 		if n == 0 {
 			delete(rooms, roomID)
 		}

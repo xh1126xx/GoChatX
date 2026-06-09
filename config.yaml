@@ -1,4 +1,6 @@
 # GoChatX configuration
+# Sensitive values should be set via environment variables.
+# See .env.example for required variables.
 
 authsvc:
   addr: "localhost:50051"  # gRPC address of auth service
@@ -13,6 +15,7 @@ redis:
 gateway:
   listen: ":8080"
 
-db:
-  dsn: "root:123456@tcp(127.0.0.1:3306)/gochatx?parseTime=true"
-  driver: "mysql"
+# DB_DSN and JWT_SECRET must be set as environment variables.
+# Example:
+#   DB_DSN="user:pass@tcp(127.0.0.1:3306)/gochatx?parseTime=true"
+#   JWT_SECRET="your-secret-key-at-least-32-chars"

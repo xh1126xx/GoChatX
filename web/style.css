@@ -17,6 +17,31 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* ── Dark Mode ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --text: #e0e0e0;
+    --text-secondary: #9ca3af;
+    --border: #2d3748;
+    --hover: #1e2a45;
+    --msg-self: #2a3a5c;
+    --msg-other: #1e2a45;
+  }
+}
+
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --text-secondary: #9ca3af;
+  --border: #2d3748;
+  --hover: #1e2a45;
+  --msg-self: #2a3a5c;
+  --msg-other: #1e2a45;
+}
+
 html, body {
   height: 100%;
   font-family: var(--font);
@@ -38,6 +63,7 @@ html, body {
   border-radius: 16px;
   padding: 40px 36px;
   width: 380px;
+  max-width: 90%;
   box-shadow: 0 20px 60px rgba(0,0,0,.15);
 }
 
@@ -81,6 +107,8 @@ html, body {
   border-radius: 8px;
   font-size: 14px;
   outline: none;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .auth-form input:focus {
@@ -131,6 +159,7 @@ html, body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: transform .2s;
 }
 
 .main-panel {
@@ -210,6 +239,26 @@ html, body {
   padding: 0 8px;
 }
 
+/* Scrollbar styling */
+.room-list::-webkit-scrollbar,
+.user-list::-webkit-scrollbar,
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.room-list::-webkit-scrollbar-thumb,
+.user-list::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.room-list::-webkit-scrollbar-thumb:hover,
+.user-list::-webkit-scrollbar-thumb:hover,
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
 .room-item, .user-item {
   padding: 8px 12px;
   border-radius: 6px;
@@ -270,6 +319,8 @@ html, body {
   border-radius: 6px;
   font-size: 12px;
   outline: none;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .room-join input:focus {
@@ -349,25 +400,33 @@ html, body {
   font-style: italic;
 }
 
-/* ── Input ── */
+/* ── Input (textarea) ── */
 .chat-input {
   display: flex;
   gap: 10px;
   padding: 12px 20px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  align-items: flex-end;
 }
 
-.chat-input input {
+.chat-input textarea {
   flex: 1;
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 14px;
   outline: none;
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+  font-family: var(--font);
+  line-height: 1.4;
+  background: var(--surface);
+  color: var(--text);
 }
 
-.chat-input input:focus {
+.chat-input textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(79,110,247,.1);
 }
@@ -381,6 +440,8 @@ html, body {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  flex-shrink: 0;
+  height: 40px;
 }
 
 .chat-input button:hover {
@@ -388,7 +449,81 @@ html, body {
 }
 
 /* ── Responsive ── */
+@media (max-width: 768px) {
+  .msg-bubble {
+    max-width: 85%;
+  }
+}
+
 @media (max-width: 640px) {
-  .auth-card { width: 90%; padding: 28px 24px; }
-  .sidebar { width: 200px; }
+  .auth-card {
+    width: 90%;
+    padding: 28px 24px;
+  }
+
+  .sidebar {
+    width: 200px;
+  }
+
+  .msg-bubble {
+    max-width: 85%;
+  }
+}
+
+@media (max-width: 480px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 260px;
+    transform: translateX(-100%);
+    box-shadow: 2px 0 12px rgba(0,0,0,.15);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.4);
+    z-index: 99;
+  }
+
+  .sidebar-overlay.open {
+    display: block;
+  }
+
+  .chat-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .menu-btn {
+    display: block;
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text);
+    padding: 0;
+  }
+
+  .chat-input {
+    padding: 8px 12px;
+  }
+
+  .chat-messages {
+    padding: 12px;
+  }
+}
+
+/* Hide menu button on desktop */
+.menu-btn {
+  display: none;
 }
