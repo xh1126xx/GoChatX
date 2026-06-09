@@ -70,6 +70,8 @@
 | 缓存 | Redis 7 |
 | 密码加密 | bcrypt |
 | 配置 | spf13/viper |
+| 日志 | log/slog（JSON 结构化） |
+| 反向代理 | Nginx（TLS + 限流 + WebSocket） |
 | 前端 | 原生 HTML/CSS/JS（零依赖） |
 
 ## 快速开始
@@ -180,7 +182,30 @@ AuthSvc 通过环境变量配置（敏感信息无默认值，必须显式设置
 | `REDIS_ADDR` | | `127.0.0.1:6379` | Redis 地址 |
 | `LISTEN_ADDR` | | `:50051` | gRPC 监听地址 |
 
-Gateway 通过 `config.yaml` 或 viper 默认值配置，见文件内注释。
+Gateway 通过 `config.yaml` 或环境变量配置（前缀 `GOCHATX_`）：
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|---------|--------|------|
+| `authsvc.addr` | `GOCHATX_AUTHSVC_ADDR` | `localhost:50051` | AuthSvc gRPC 地址 |
+| `mongo.uri` | `GOCHATX_MONGO_URI` | `mongodb://127.0.0.1:27017` | MongoDB URI |
+| `mongo.db` | `GOCHATX_MONGO_DB` | `gochatx` | MongoDB 数据库名 |
+| `redis.addr` | `GOCHATX_REDIS_ADDR` | `127.0.0.1:6379` | Redis 地址 |
+| `gateway.listen` | `GOCHATX_GATEWAY_LISTEN` | `:8080` | HTTP 监听端口 |
+| `gateway.cors` | `GOCHATX_GATEWAY_CORS` | `*` | CORS 允许的 Origin（逗号分隔） |
+
+## Makefile 命令
+
+| 命令 | 说明 |
+|------|------|
+| `make build` | 编译 authsvc 和 gateway 到 `bin/` |
+| `make test` | 运行所有单元测试 |
+| `make vet` | 运行 `go vet` 静态分析 |
+| `make lint` | 运行 `golangci-lint` |
+| `make docker-build` | 构建 Docker 镜像 |
+| `make docker-up` | 启动所有容器 |
+| `make docker-down` | 停止所有容器 |
+| `make cert` | 生成自签名 TLS 证书 |
+| `make clean` | 清理编译产物 |
 
 ## 安全特性
 
