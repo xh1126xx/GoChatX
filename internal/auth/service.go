@@ -27,6 +27,7 @@ type AuthService struct {
 
 type Claims struct {
 	UserID string `json:"user_id"`
+	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -41,7 +42,6 @@ func checkPassword(hash, password string) bool {
 }
 
 func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	// Input validation
 	if len(req.Username) < 2 || len(req.Username) > 32 {
 		return &pb.RegisterResponse{Success: false, Message: "username must be 2-32 characters"}, nil
 	}
@@ -54,7 +54,7 @@ func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*p
 		return nil, status.Error(codes.Internal, "failed to hash password")
 	}
 
-	_, err = s.DB.ExecContext(ctx, "INSERT INTO users (username, password) VALUES (?, ?)", req.Username, hashed)
+	_, err = s.DB.ExecContext(ctx, "INSERT INTO users (username, password, role) VALUES (?, ?, 'user')", req.Username, hashed)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
@@ -66,14 +66,13 @@ func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*p
 }
 
 func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
-	// Input validation
 	if req.Username == "" || req.Password == "" {
 		return &pb.LoginResponse{Success: false, Message: "username and password required"}, nil
 	}
 
-	row := s.DB.QueryRowContext(ctx, "SELECT id, password FROM users WHERE username=?", req.Username)
-	var id, pw string
-	if err := row.Scan(&id, &pw); err != nil {
+	row := s.DB.QueryRowContext(ctx, "SELECT id, password, role FROM users WHERE username=?", req.Username)
+	var id, pw, role string
+	if err := row.Scan(&id, &pw, &role); err != nil {
 		return &pb.LoginResponse{Success: false, Message: "user not found"}, nil
 	}
 	if !checkPassword(pw, req.Password) {
@@ -82,6 +81,7 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 
 	claims := Claims{
 		UserID: id,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "gochatx-auth",
 			Subject:   id,
@@ -103,7 +103,6 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 
 func (s *AuthService) Validate(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
 	t, err := jwt.ParseWithClaims(req.Token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Verify signing algorithm to prevent alg:none attack
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -116,4 +115,21 @@ func (s *AuthService) Validate(ctx context.Context, req *pb.TokenRequest) (*pb.T
 		return &pb.TokenResponse{Valid: true, UserId: claims.UserID}, nil
 	}
 	return &pb.TokenResponse{Valid: false}, nil
+}
+
+// ParseToken parses a JWT token and returns claims. Used by gateway for role checks.
+func (s *AuthService) ParseToken(tokenStr string) (*Claims, error) {
+	t, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return s.JWTSecret, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if claims, ok := t.Claims.(*Claims); ok && t.Valid {
+		return claims, nil
+	}
+	return nil, fmt.Errorf("invalid token")
 }

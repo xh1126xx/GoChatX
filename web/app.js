@@ -260,6 +260,51 @@ $msgInput.onkeydown = (e) => {
   }
 };
 
+// ── File Upload ──
+const $uploadBtn = document.getElementById('upload-btn');
+const $fileInput = document.getElementById('file-input');
+
+$uploadBtn.onclick = () => $fileInput.click();
+$fileInput.onchange = async () => {
+  const file = $fileInput.files[0];
+  if (!file) return;
+  $fileInput.value = '';
+
+  if (file.size > 10 * 1024 * 1024) {
+    addSystemMsg('文件过大，最大 10MB');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    addSystemMsg('上传中...');
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.ok) {
+      // Send file message
+      const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(data.url);
+      const content = isImage ? '[图片] ' + data.url : '[文件] ' + data.filename + ' ' + data.url;
+      if (currentPrivate) {
+        send({ type: 'private', to: currentPrivate, content });
+        addChatMsg(selfId, content, Date.now(), true, true);
+      } else if (currentRoom) {
+        send({ type: 'send', room_id: currentRoom, content });
+      }
+      scrollBottom();
+    } else {
+      addSystemMsg('上传失败: ' + (data.msg || 'unknown'));
+    }
+  } catch {
+    addSystemMsg('上传失败: 网络错误');
+  }
+};
+
 // ── Room Management ──
 $roomInput.onkeydown = (e) => {
   if (e.key === 'Enter') {
@@ -358,9 +403,10 @@ function addChatMsg(from, content, ts, isSelf, isPrivate) {
   const time = ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
 
   // Escape both `from` and `content` to prevent XSS
+  const rendered = renderContent(content);
   div.innerHTML =
     '<div class="msg-meta">' + (isPrivate ? '@' : '') + escapeHtml(from) + (time ? ' ' + time : '') + '</div>' +
-    '<div class="msg-bubble">' + escapeHtml(content) + '</div>';
+    '<div class="msg-bubble">' + rendered + '</div>';
 
   $chatMessages.appendChild(div);
 
@@ -401,6 +447,25 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+// Render message content: images inline, file links clickable
+function renderContent(content) {
+  if (!content) return '';
+  // Image pattern: [图片] /uploads/xxx.jpg
+  const imgMatch = content.match(/\[图片\]\s*(\/uploads\/[\w.-]+\.(jpg|jpeg|png|gif|webp))/i);
+  if (imgMatch) {
+    return '<img src="' + escapeHtml(imgMatch[1]) + '" style="max-width:300px;max-height:200px;border-radius:8px;cursor:pointer" onclick="window.open(this.src)" alt="图片">';
+  }
+  // File pattern: [文件] filename /uploads/xxx.ext
+  const fileMatch = content.match(/\[文件\]\s*(.+?)\s*(\/uploads\/[\w.-]+)/);
+  if (fileMatch) {
+    return '📄 <a href="' + escapeHtml(fileMatch[2]) + '" target="_blank" style="color:inherit;text-decoration:underline">' + escapeHtml(fileMatch[1]) + '</a>';
+  }
+  // URL auto-link
+  const urlRegex = /(https?:\/\/[^\s<]+)/g;
+  const escaped = escapeHtml(content);
+  return escaped.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">$1</a>');
 }
 
 // ── Heartbeat ──

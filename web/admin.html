@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoChatX 管理后台</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f0f2f5; --surface: #fff; --primary: #4f6ef7; --primary-dark: #3b54d4;
+  --text: #1a1a2e; --text-sec: #6b7280; --border: #e5e7eb; --danger: #ef4444;
+  --online: #22c55e; --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1a1a2e; --surface: #16213e; --text: #e0e0e0; --text-sec: #9ca3af; --border: #2d3748; }
+}
+body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 24px; margin-bottom: 20px; color: var(--primary); }
+
+/* Login */
+.login-box { max-width: 360px; margin: 80px auto; background: var(--surface); padding: 32px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.1); }
+.login-box input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: var(--surface); color: var(--text); }
+.login-box button { width: 100%; padding: 10px; background: var(--primary); color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; }
+.login-box button:hover { background: var(--primary-dark); }
+.login-err { color: var(--danger); font-size: 13px; margin-top: 8px; text-align: center; }
+
+/* Stats cards */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--surface); padding: 20px; border-radius: 10px; border: 1px solid var(--border); }
+.stat-card .label { font-size: 12px; color: var(--text-sec); text-transform: uppercase; letter-spacing: .5px; }
+.stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; color: var(--primary); }
+
+/* Table */
+.card { background: var(--surface); border-radius: 10px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 24px; }
+.card-header { padding: 14px 20px; font-weight: 600; font-size: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 16px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
+th { background: var(--bg); font-weight: 600; font-size: 12px; text-transform: uppercase; color: var(--text-sec); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-online { background: #dcfce7; color: #166534; }
+.badge-offline { background: #f3f4f6; color: #6b7280; }
+.badge-admin { background: #fef3c7; color: #92400e; }
+.badge-banned { background: #fecaca; color: #991b1b; }
+.badge-user { background: #dbeafe; color: #1e40af; }
+.btn { padding: 4px 12px; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 600; }
+.btn-ban { background: var(--danger); color: #fff; }
+.btn-unban { background: var(--online); color: #fff; }
+.btn:hover { opacity: .85; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Nav */
+.nav { display: flex; gap: 12px; margin-bottom: 20px; align-items: center; }
+.nav a { color: var(--primary); text-decoration: none; font-size: 14px; }
+.nav a:hover { text-decoration: underline; }
+.nav .spacer { flex: 1; }
+.btn-logout { background: none; border: 1px solid var(--border); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-sec); }
+.btn-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Rooms */
+.room-tag { display: inline-block; padding: 3px 10px; background: var(--bg); border-radius: 12px; font-size: 12px; margin: 2px; }
+</style>
+</head>
+<body>
+
+<div id="login-view" class="login-box">
+  <h1 style="text-align:center;margin-bottom:20px">GoChatX Admin</h1>
+  <input type="text" id="admin-username" placeholder="管理员用户名" autocomplete="username">
+  <input type="password" id="admin-password" placeholder="密码" autocomplete="current-password">
+  <button onclick="adminLogin()">登录</button>
+  <p id="login-err" class="login-err"></p>
+</div>
+
+<div id="admin-view" class="container" style="display:none">
+  <div class="nav">
+    <h1>GoChatX 管理后台</h1>
+    <span class="spacer"></span>
+    <a href="/">← 返回聊天</a>
+    <button class="btn-logout" onclick="adminLogout()">退出</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats" id="stats-cards">
+    <div class="stat-card"><div class="label">在线用户</div><div class="value" id="stat-online">-</div></div>
+    <div class="stat-card"><div class="label">活跃房间</div><div class="value" id="stat-rooms">-</div></div>
+  </div>
+
+  <!-- Online users -->
+  <div class="card">
+    <div class="card-header">当前在线用户</div>
+    <div id="online-list" style="padding:12px 16px"></div>
+  </div>
+
+  <!-- Active rooms -->
+  <div class="card">
+    <div class="card-header">活跃房间</div>
+    <div id="room-list" style="padding:12px 16px"></div>
+  </div>
+
+  <!-- Users table -->
+  <div class="card">
+    <div class="card-header">
+      用户管理
+      <button class="btn" style="background:var(--primary);color:#fff" onclick="loadUsers()">刷新</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+      <tbody id="users-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let adminToken = localStorage.getItem('admin_token');
+
+async function adminLogin() {
+  const username = document.getElementById('admin-username').value.trim();
+  const password = document.getElementById('admin-password').value.trim();
+  if (!username || !password) return;
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (data.ok && data.token) {
+      adminToken = data.token;
+      localStorage.setItem('admin_token', adminToken);
+      showAdmin();
+    } else {
+      document.getElementById('login-err').textContent = data.msg || '登录失败';
+    }
+  } catch {
+    document.getElementById('login-err').textContent = '服务器不可用';
+  }
+}
+
+function adminLogout() {
+  adminToken = null;
+  localStorage.removeItem('admin_token');
+  document.getElementById('login-view').style.display = '';
+  document.getElementById('admin-view').style.display = 'none';
+}
+
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminToken, ...(opts.headers || {}) },
+  });
+  if (res.status === 401 || res.status === 403) {
+    adminLogout();
+    throw new Error('auth failed');
+  }
+  return res.json();
+}
+
+async function showAdmin() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('admin-view').style.display = '';
+  await Promise.all([loadStats(), loadUsers()]);
+}
+
+async function loadStats() {
+  try {
+    const data = await apiFetch('/api/admin/stats');
+    if (!data.ok) return;
+    document.getElementById('stat-online').textContent = data.online_users || 0;
+    document.getElementById('stat-rooms').textContent = data.active_rooms || 0;
+
+    // Online users
+    const onlineDiv = document.getElementById('online-list');
+    const users = data.online_list || [];
+    onlineDiv.innerHTML = users.length ? users.map(u => '<span class="room-tag">' + escapeHtml(u) + '</span>').join(' ') : '<span style="color:var(--text-sec)">无在线用户</span>';
+
+    // Rooms
+    const roomDiv = document.getElementById('room-list');
+    const rooms = data.room_list || [];
+    roomDiv.innerHTML = rooms.length ? rooms.map(r => '<span class="room-tag">#' + escapeHtml(r) + '</span>').join(' ') : '<span style="color:var(--text-sec)">无活跃房间</span>';
+  } catch {}
+}
+
+async function loadUsers() {
+  try {
+    const data = await apiFetch('/api/admin/users');
+    if (!data.ok) return;
+    const tbody = document.getElementById('users-tbody');
+    const users = data.users || [];
+    tbody.innerHTML = users.map(u => {
+      const roleBadge = u.role === 'admin' ? '<span class="badge badge-admin">admin</span>'
+        : u.role === 'banned' ? '<span class="badge badge-banned">banned</span>'
+        : '<span class="badge badge-user">user</span>';
+      const statusBadge = u.is_online ? '<span class="badge badge-online">在线</span>' : '<span class="badge badge-offline">离线</span>';
+      const action = u.role === 'admin' ? '-'
+        : u.role === 'banned' ? '<button class="btn btn-unban" onclick="unbanUser(' + u.id + ')">解封</button>'
+        : '<button class="btn btn-ban" onclick="banUser(' + u.id + ')">封禁</button>';
+      return '<tr><td>' + u.id + '</td><td>' + escapeHtml(u.username) + '</td><td>' + roleBadge + '</td><td>' + statusBadge + '</td><td>' + new Date(u.created_at).toLocaleString('zh-CN') + '</td><td>' + action + '</td></tr>';
+    }).join('');
+  } catch {}
+}
+
+async function banUser(id) {
+  if (!confirm('确认封禁此用户？')) return;
+  try {
+    const data = await apiFetch('/api/admin/users/ban', { method: 'POST', body: JSON.stringify({ user_id: String(id) }) });
+    alert(data.msg);
+    await Promise.all([loadStats(), loadUsers()]);
+  } catch {}
+}
+
+async function unbanUser(id) {
+  try {
+    const data = await apiFetch('/api/admin/users/unban', { method: 'POST', body: JSON.stringify({ user_id: String(id) }) });
+    alert(data.msg);
+    await Promise.all([loadStats(), loadUsers()]);
+  } catch {}
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// Auto-login if token exists
+if (adminToken) {
+  showAdmin();
+}
+</script>
+</body>
+</html>

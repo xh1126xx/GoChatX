@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -27,7 +29,6 @@ func loadConfig(path string) {
 	viper.SetDefault("gateway.listen", ":8080")
 	viper.SetDefault("gateway.cors", "*")
 
-	// Allow env vars with GOCHATX_ prefix
 	viper.SetEnvPrefix("GOCHATX")
 	viper.AutomaticEnv()
 
@@ -40,7 +41,6 @@ func loadConfig(path string) {
 }
 
 func main() {
-	// Structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -50,6 +50,13 @@ func main() {
 	flag.Parse()
 
 	loadConfig(*cfg)
+
+	// JWT secret for admin middleware
+	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtSecret) == 0 {
+		jwtSecret = []byte("supersecretkey") // dev fallback
+		slog.Warn("JWT_SECRET not set, using dev default")
+	}
 
 	// connect to auth service
 	authAddr := viper.GetString("authsvc.addr")
@@ -69,6 +76,32 @@ func main() {
 			authConn = conn
 			defer conn.Close()
 			slog.Info("connected to auth service", "addr", authAddr)
+		}
+	}
+
+	// connect to MySQL (for admin endpoints)
+	var db *sql.DB
+	dbDSN := os.Getenv("DB_DSN")
+	if dbDSN != "" {
+		var err error
+		db, err = sql.Open("mysql", dbDSN)
+		if err != nil {
+			slog.Warn("can't open mysql", "error", err)
+			db = nil
+		} else {
+			db.SetMaxOpenConns(10)
+			db.SetMaxIdleConns(3)
+			db.SetConnMaxLifetime(5 * time.Minute)
+			pctx, pcancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := db.PingContext(pctx); err != nil {
+				slog.Warn("mysql ping failed, admin user management disabled", "error", err)
+				db = nil
+			}
+			pcancel()
+			if db != nil {
+				defer db.Close()
+				slog.Info("connected to MySQL")
+			}
 		}
 	}
 
@@ -107,6 +140,8 @@ func main() {
 
 	// gateway server
 	gw := gateway.NewGatewayServer(authConn, mongoStore, rdb)
+	gw.DB = db
+	gw.JWTSecret = jwtSecret
 	rest := gateway.NewRESTHandler(authConn, rdb)
 
 	// Rate limiter
@@ -116,15 +151,32 @@ func main() {
 	corsOrigins := viper.GetString("gateway.cors")
 	corsMiddleware := gateway.CORSMiddleware(corsOrigins)
 
+	// Admin middleware
+	adminMW := gateway.AdminMiddleware(jwtSecret)
+
 	mux := http.NewServeMux()
+
+	// Public routes
 	mux.HandleFunc("/ws", gw.HandleWS)
 	mux.HandleFunc("/health", gw.Health)
 	mux.Handle("/api/login", rl.Limit(gateway.LoginKey, 10, time.Minute)(http.HandlerFunc(rest.Login)))
 	mux.Handle("/api/register", rl.Limit(gateway.LoginKey, 5, time.Minute)(http.HandlerFunc(rest.Register)))
 	mux.Handle("/api/users/online", rl.Limit(gateway.IPKey, 30, time.Minute)(http.HandlerFunc(rest.OnlineUsers)))
+
+	// File upload (authenticated)
+	mux.Handle("/api/upload", gateway.AuthMiddleware(jwtSecret)(http.HandlerFunc(gw.Upload)))
+	// Uploaded files served as static
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+
+	// Admin routes (require admin role)
+	mux.Handle("/api/admin/stats", adminMW(http.HandlerFunc(gw.AdminStats)))
+	mux.Handle("/api/admin/users", adminMW(http.HandlerFunc(gw.AdminUsers)))
+	mux.Handle("/api/admin/users/ban", adminMW(http.HandlerFunc(gw.AdminBanUser)))
+	mux.Handle("/api/admin/users/unban", adminMW(http.HandlerFunc(gw.AdminUnbanUser)))
+
+	// Static files
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
 
-	// Wrap with CORS
 	handler := corsMiddleware(mux)
 
 	addr := viper.GetString("gateway.listen")
@@ -137,7 +189,6 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

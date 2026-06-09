@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -38,6 +39,8 @@ type GatewayServer struct {
 	AuthClient  authpb.AuthServiceClient
 	Mongo       *storage.MangoStore
 	Redis       *redis.Client
+	DB          *sql.DB
+	JWTSecret   []byte
 	CheckOrigin func(r *http.Request) bool
 }
 
@@ -163,6 +166,17 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			userID := resp.UserId
+
+			// Check if user is banned
+			if s.DB != nil {
+				var role string
+				if err := s.DB.QueryRowContext(context.Background(), "SELECT role FROM users WHERE id=?", userID).Scan(&role); err == nil && role == "banned" {
+					sendJSON(sendCh, WSPayload{Type: "error", Data: "account banned"})
+					conn.Close()
+					break
+				}
+			}
+
 			me = &Client{UserID: userID, Conn: conn, Send: sendCh}
 			registerOnline(userID, me)
 			s.pushUndelivered(userID)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -94,6 +95,92 @@ func IPKey(r *http.Request) string {
 func LoginKey(r *http.Request) string {
 	ip := IPKey(r)
 	return fmt.Sprintf("login:%s", ip)
+}
+
+// AdminMiddleware checks JWT token and requires admin role.
+// jwtSecret is used to parse and validate the token.
+func AdminMiddleware(jwtSecret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+				jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "msg": "missing or invalid authorization header"})
+				return
+			}
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+
+			claims, err := parseJWTToken(tokenStr, jwtSecret)
+			if err != nil {
+				jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "msg": "invalid token"})
+				return
+			}
+			if claims.Role != "admin" {
+				jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "msg": "admin access required"})
+				return
+			}
+
+			// Add user info to context
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, ctxKeyUserID, claims.UserID)
+			ctx = context.WithValue(ctx, ctxKeyRole, claims.Role)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// AuthMiddleware checks JWT token (any authenticated user).
+func AuthMiddleware(jwtSecret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+				jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "msg": "missing or invalid authorization header"})
+				return
+			}
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+
+			claims, err := parseJWTToken(tokenStr, jwtSecret)
+			if err != nil {
+				jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "msg": "invalid token"})
+				return
+			}
+
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, ctxKeyUserID, claims.UserID)
+			ctx = context.WithValue(ctx, ctxKeyRole, claims.Role)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+type contextKey string
+
+const (
+	ctxKeyUserID contextKey = "user_id"
+	ctxKeyRole   contextKey = "role"
+)
+
+// parseJWTToken parses a JWT token string and returns claims.
+func parseJWTToken(tokenStr string, secret []byte) (*jwtClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwtClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return secret, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if claims, ok := token.Claims.(*jwtClaims); ok && token.Valid {
+		return claims, nil
+	}
+	return nil, fmt.Errorf("invalid token")
+}
+
+type jwtClaims struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
 }
 
 // CORSMiddleware returns a middleware that handles CORS headers.

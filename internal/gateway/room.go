@@ -87,3 +87,21 @@ func removeEmptyRoom(roomID string) {
 		}
 	}
 }
+
+// GetRoomCount returns the number of active rooms.
+func GetRoomCount() int {
+	roomsMu.RLock()
+	defer roomsMu.RUnlock()
+	return len(rooms)
+}
+
+// GetRoomIDs returns all active room IDs.
+func GetRoomIDs() []string {
+	roomsMu.RLock()
+	defer roomsMu.RUnlock()
+	ids := make([]string, 0, len(rooms))
+	for id := range rooms {
+		ids = append(ids, id)
+	}
+	return ids
+}
