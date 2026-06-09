@@ -14,6 +14,7 @@ redis:
 
 gateway:
   listen: ":8080"
+  cors: "*"  # Allowed origins (comma-separated or "*" for all)
 
 # DB_DSN and JWT_SECRET must be set as environment variables.
 # Example:

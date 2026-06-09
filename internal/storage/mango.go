@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -97,7 +97,7 @@ func (ms *MangoStore) QueryHistory(roomID string, limit int64) ([]*ChatMessage, 
 	for cur.Next(ctx) {
 		var m ChatMessage
 		if err := cur.Decode(&m); err != nil {
-			log.Printf("WARNING: decode history message: %v", err)
+			slog.Warn("decode history message", "error", err)
 			continue
 		}
 		msgs = append(msgs, &m)
@@ -126,7 +126,7 @@ func (ms *MangoStore) PullUndeliveredForUser(userID string) ([]*ChatMessage, err
 	for cur.Next(ctx) {
 		var m ChatMessage
 		if err := cur.Decode(&m); err != nil {
-			log.Printf("WARNING: decode undelivered message: %v", err)
+			slog.Warn("decode undelivered message", "error", err)
 			continue
 		}
 		msgs = append(msgs, &m)

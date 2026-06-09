@@ -194,6 +194,12 @@ Gateway 通过 `config.yaml` 或 viper 默认值配置，见文件内注释。
 - **Origin 检查** — WebSocket `CheckOrigin` 可配置
 - **HTTP 超时** — Read/Write/Idle/ReadHeader 均有超时配置
 - **环境变量管理** — 敏感信息不硬编码，提供 `.env.example` 模板
+- **速率限制** — Redis 滑动窗口限流（登录 10 次/分钟，注册 5 次/分钟，API 30 次/分钟）
+- **CORS** — 可配置允许的 Origin 列表
+- **反向代理** — Nginx 容器提供 TLS 终止、安全头、WebSocket 代理
+- **健康检查** — `GET /health` 端点，检查 MongoDB/Redis/AuthSvc 连接状态
+- **结构化日志** — `log/slog` JSON 格式日志，便于 ELK/Grafana 采集
+- **容器化** — 多阶段 Dockerfile（distroless 镜像），完整 docker-compose 编排
 
 ## 项目结构
 
@@ -207,22 +213,79 @@ GoChatX/
 │   ├── authsvc/main.go        # 认证服务入口
 │   └── gateway/main.go        # 网关入口（REST + WebSocket + 静态文件）
 ├── internal/
-│   ├── auth/service.go        # 认证逻辑（注册/登录/JWT/bcrypt）
+│   ├── auth/
+│   │   ├── service.go         # 认证逻辑（注册/登录/JWT/bcrypt）
+│   │   └── service_test.go    # 认证单元测试
 │   ├── gateway/
-│   │   ├── api.go             # REST API 处理（注册/登录/在线用户）
+│   │   ├── api.go             # REST API + 健康检查端点
 │   │   ├── clients.go         # WebSocket 客户端 + 在线用户管理
+│   │   ├── clients_test.go    # 客户端管理单元测试
+│   │   ├── middleware.go      # 速率限制 + CORS 中间件
 │   │   ├── room.go            # 房间管理（创建/加入/广播/离开）
+│   │   ├── room_test.go       # 房间管理单元测试
 │   │   └── ws_handle.go       # WebSocket 消息处理主逻辑
 │   └── storage/mango.go       # MongoDB 存储层（索引/错误处理）
 ├── web/
 │   ├── index.html             # 前端 SPA 页面
 │   ├── style.css              # 样式（暗色模式 + 响应式）
 │   └── app.js                 # 前端逻辑（指数退避重连/XSS 防护）
+├── migrations/                # 数据库迁移文件
+│   ├── 001_create_users.up.sql
+│   └── 001_create_users.down.sql
+├── nginx/                     # Nginx 反向代理配置
+│   ├── nginx.conf
+│   └── gen-cert.sh            # 自签名证书生成脚本
+├── Dockerfile                 # 多阶段构建（authsvc + gateway）
+├── Makefile                   # 构建/测试/Docker 命令
 ├── config.yaml                # 配置文件
 ├── .env.example               # 环境变量模板
-├── docker-compose.yml         # 依赖服务编排
+├── .dockerignore              # Docker 构建排除
+├── docker-compose.yml         # 完整服务编排（含 nginx）
 ├── go.mod
 └── go.sum
+```
+
+## Docker 部署
+
+### 快速启动
+
+```bash
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 设置 DB_DSN、JWT_SECRET 等
+
+# 2. 生成自签名证书（开发/测试用）
+make cert
+
+# 3. 构建并启动所有服务
+make docker-build
+make docker-up
+
+# 4. 访问
+# HTTP:  http://localhost (自动跳转 HTTPS)
+# HTTPS: https://localhost
+```
+
+### 服务架构
+
+```
+┌─────────────────────────────────────────────────┐
+│  nginx (:80/:443)                               │
+│  ├── TLS 终止                                    │
+│  ├── 速率限制 (登录 10/min, API 30/min)          │
+│  └── WebSocket 代理                              │
+├─────────────────────────────────────────────────┤
+│  gateway (:8080)  ←→  authsvc (:50051)          │
+├─────────────────────────────────────────────────┤
+│  MySQL (:3306)  MongoDB (:27017)  Redis (:6379) │
+└─────────────────────────────────────────────────┘
+```
+
+### 健康检查
+
+```bash
+curl https://localhost/health
+# {"status":"ok","mongo":"connected","redis":"connected","authsvc":"configured"}
 ```
 
 ## 降级策略

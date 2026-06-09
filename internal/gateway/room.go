@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 )
 
@@ -46,7 +46,7 @@ func (r *Room) broadcast(b []byte) {
 		select {
 		case c.Send <- b:
 		default:
-			log.Printf("WARNING: broadcast drop for user %s (channel full)", c.UserID)
+			slog.Warn("broadcast drop (channel full)", "user_id", c.UserID)
 		}
 	}
 }

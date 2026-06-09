@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -33,7 +33,7 @@ func jsonResponse(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("WARNING: jsonResponse encode: %v", err)
+		slog.Warn("jsonResponse encode failed", "error", err)
 	}
 }
 
@@ -110,4 +110,47 @@ func (h *RESTHandler) OnlineUsers(w http.ResponseWriter, r *http.Request) {
 		users = []string{}
 	}
 	jsonResponse(w, 200, map[string]interface{}{"ok": true, "users": users})
+}
+
+// Health handles GET /health — returns service health status.
+func (s *GatewayServer) Health(w http.ResponseWriter, r *http.Request) {
+	status := map[string]string{"status": "ok"}
+
+	if s.Mongo != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.Mongo.Client.Ping(ctx, nil); err != nil {
+			status["mongo"] = "disconnected"
+			status["status"] = "degraded"
+		} else {
+			status["mongo"] = "connected"
+		}
+	} else {
+		status["mongo"] = "disabled"
+	}
+
+	if s.Redis != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+		defer cancel()
+		if err := s.Redis.Ping(ctx).Err(); err != nil {
+			status["redis"] = "disconnected"
+			status["status"] = "degraded"
+		} else {
+			status["redis"] = "connected"
+		}
+	} else {
+		status["redis"] = "disabled"
+	}
+
+	if s.AuthClient != nil {
+		status["authsvc"] = "configured"
+	} else {
+		status["authsvc"] = "disabled"
+	}
+
+	code := http.StatusOK
+	if status["status"] != "ok" {
+		code = http.StatusServiceUnavailable
+	}
+	jsonResponse(w, code, status)
 }

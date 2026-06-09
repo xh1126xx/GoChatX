@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -96,7 +96,7 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 	}
 
 	if err := s.Redis.Set(ctx, "user:"+id+":online", "true", 24*time.Hour).Err(); err != nil {
-		log.Printf("WARNING: failed to set online status for user %s: %v", id, err)
+		slog.Warn("failed to set online status", "user_id", id, "error", err)
 	}
 	return &pb.LoginResponse{Success: true, Message: "Login successful", Token: token}, nil
 }

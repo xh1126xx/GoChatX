@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,16 +25,27 @@ func loadConfig(path string) {
 	viper.SetDefault("mongo.db", "gochatx")
 	viper.SetDefault("redis.addr", "127.0.0.1:6379")
 	viper.SetDefault("gateway.listen", ":8080")
+	viper.SetDefault("gateway.cors", "*")
+
+	// Allow env vars with GOCHATX_ prefix
+	viper.SetEnvPrefix("GOCHATX")
+	viper.AutomaticEnv()
 
 	if path != "" {
 		viper.SetConfigFile(path)
 		if err := viper.ReadInConfig(); err != nil {
-			log.Printf("read config err: %v, using defaults", err)
+			slog.Warn("config file not found, using defaults", "error", err)
 		}
 	}
 }
 
 func main() {
+	// Structured logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	cfg := flag.String("config", "config.yaml", "config file path (optional)")
 	flag.Parse()
 
@@ -51,12 +62,13 @@ func main() {
 		)
 		cancel()
 		if err != nil {
-			log.Printf("warning: can't connect to auth service %s: %v (fall back to token-as-userID mode)", authAddr, err)
+			slog.Warn("can't connect to auth service, falling back to token-as-userID mode",
+				"addr", authAddr, "error", err)
 			authConn = nil
 		} else {
 			authConn = conn
 			defer conn.Close()
-			log.Println("connected to auth service", authAddr)
+			slog.Info("connected to auth service", "addr", authAddr)
 		}
 	}
 
@@ -68,10 +80,11 @@ func main() {
 		var err error
 		mongoStore, err = storage.NewMangoStore(mongoURI, mongoDB)
 		if err != nil {
-			log.Printf("warning: can't connect to mongo: %v (message persistence disabled)", err)
+			slog.Warn("can't connect to mongo, message persistence disabled", "error", err)
 			mongoStore = nil
 		} else {
 			defer mongoStore.Close()
+			slog.Info("connected to MongoDB", "uri", mongoURI, "db", mongoDB)
 		}
 	}
 
@@ -82,12 +95,13 @@ func main() {
 		rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
 		pctx, pcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if err := rdb.Ping(pctx).Err(); err != nil {
-			log.Printf("warning: redis ping failed: %v (continuing without redis)", err)
+			slog.Warn("redis ping failed, continuing without redis", "error", err)
 			rdb = nil
 		}
 		pcancel()
 		if rdb != nil {
 			defer rdb.Close()
+			slog.Info("connected to Redis", "addr", redisAddr)
 		}
 	}
 
@@ -95,17 +109,28 @@ func main() {
 	gw := gateway.NewGatewayServer(authConn, mongoStore, rdb)
 	rest := gateway.NewRESTHandler(authConn, rdb)
 
+	// Rate limiter
+	rl := gateway.NewRateLimiter(rdb)
+
+	// CORS
+	corsOrigins := viper.GetString("gateway.cors")
+	corsMiddleware := gateway.CORSMiddleware(corsOrigins)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWS)
-	mux.HandleFunc("/api/register", rest.Register)
-	mux.HandleFunc("/api/login", rest.Login)
-	mux.HandleFunc("/api/users/online", rest.OnlineUsers)
+	mux.HandleFunc("/health", gw.Health)
+	mux.Handle("/api/login", rl.Limit(gateway.LoginKey, 10, time.Minute)(http.HandlerFunc(rest.Login)))
+	mux.Handle("/api/register", rl.Limit(gateway.LoginKey, 5, time.Minute)(http.HandlerFunc(rest.Register)))
+	mux.Handle("/api/users/online", rl.Limit(gateway.IPKey, 30, time.Minute)(http.HandlerFunc(rest.OnlineUsers)))
 	mux.Handle("/", http.FileServer(http.Dir("./web")))
+
+	// Wrap with CORS
+	handler := corsMiddleware(mux)
 
 	addr := viper.GetString("gateway.listen")
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -118,17 +143,18 @@ func main() {
 
 	go func() {
 		<-quit
-		log.Println("shutting down gateway...")
+		slog.Info("shutting down gateway...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("gateway shutdown error: %v", err)
+			slog.Error("gateway shutdown error", "error", err)
 		}
 	}()
 
-	log.Println("Gateway listening on", addr)
+	slog.Info("gateway started", "addr", addr, "cors", corsOrigins)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("gateway failed: %v", err)
+		slog.Error("gateway failed", "error", err)
+		os.Exit(1)
 	}
-	log.Println("gateway stopped")
+	slog.Info("gateway stopped")
 }

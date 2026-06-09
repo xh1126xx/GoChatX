@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"time"
@@ -213,7 +213,7 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			bs, err := json.Marshal(payload)
 			if err != nil {
-				log.Printf("ERROR: marshal send message: %v", err)
+				slog.Error("marshal send message", "error", err)
 				sendJSON(sendCh, WSPayload{Type: "error", Data: "failed to encode message"})
 				continue
 			}
@@ -230,7 +230,7 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 				}
 				go func() {
 					if err := s.Mongo.SaveMessage(cm); err != nil {
-						log.Printf("ERROR: save message: %v", err)
+						slog.Error("save message", "error", err)
 					}
 				}()
 			}
@@ -250,7 +250,7 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			bs, err := json.Marshal(payload)
 			if err != nil {
-				log.Printf("ERROR: marshal private message: %v", err)
+				slog.Error("marshal private message", "error", err)
 				sendJSON(sendCh, WSPayload{Type: "error", Data: "failed to encode message"})
 				continue
 			}
@@ -270,7 +270,7 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					go func() {
 						if err := s.Mongo.SaveMessage(cm); err != nil {
-							log.Printf("ERROR: save private message: %v", err)
+							slog.Error("save private message", "error", err)
 						}
 					}()
 				}
@@ -286,7 +286,7 @@ func (s *GatewayServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					go func() {
 						if err := s.Mongo.SaveMessage(cm); err != nil {
-							log.Printf("ERROR: save offline message: %v", err)
+							slog.Error("save offline message", "error", err)
 						}
 					}()
 				}
@@ -367,7 +367,7 @@ func (s *GatewayServer) pushUndelivered(userID string) {
 	}
 	msgs, err := s.Mongo.PullUndeliveredForUser(userID)
 	if err != nil {
-		log.Printf("WARNING: pull undelivered for %s: %v", userID, err)
+		slog.Warn("pull undelivered failed", "user_id", userID, "error", err)
 		return
 	}
 	if len(msgs) == 0 {
@@ -387,7 +387,7 @@ func (s *GatewayServer) pushUndelivered(userID string) {
 		}
 		bs, err := json.Marshal(payload)
 		if err != nil {
-			log.Printf("ERROR: marshal undelivered message: %v", err)
+			slog.Error("marshal undelivered message", "error", err)
 			continue
 		}
 		select {
@@ -401,7 +401,7 @@ func (s *GatewayServer) pushUndelivered(userID string) {
 func sendJSON(ch chan []byte, v interface{}) {
 	bs, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("ERROR: sendJSON marshal: %v", err)
+		slog.Error("sendJSON marshal", "error", err)
 		return
 	}
 	select {

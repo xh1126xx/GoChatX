@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+bin/
+dist/
+tmp/
+*.exe
+*.test
+*.out
+.env
+.env.local
+nginx/certs/
