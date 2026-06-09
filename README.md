@@ -26,11 +26,14 @@
 ## 功能
 
 - **用户系统** — REST API 注册/登录，JWT Token 认证，bcrypt 密码加密
+- **角色系统** — admin/user/banned 三级角色，JWT claims 携带角色信息
 - **群聊** — 创建/加入房间，房间内广播消息，自动加载历史
 - **私聊** — 点击在线用户发起私聊，在线实时送达，离线持久化
+- **文件上传** — 支持图片、PDF、文档、压缩包、音视频（最大 10MB），图片消息内联预览
 - **消息历史** — MongoDB 持久化，支持索引优化查询，加入房间自动加载最近 50 条
 - **离线消息** — 用户上线自动推送未送达的私聊消息（最多 200 条/次）
 - **在线状态** — 实时在线用户列表，服务端 WebSocket ping + 客户端心跳双保活，自动断线重连
+- **管理后台** — 独立管理页面，查看在线用户/房间统计、用户管理（封禁/解封）
 - **开发模式** — 无 AuthSvc 时自动降级为 token-as-userID 模式，直接填写用户名即可使用
 - **安全加固** — JWT 签名算法校验、认证重试限制、输入校验、XSS 防护、可配置 Origin 检查
 - **暗色模式** — 自动跟随系统主题，支持手动切换
@@ -135,11 +138,33 @@ go run ./cmd/gateway
 
 ## REST API
 
+### 公开接口
+
 | 方法 | 路径 | 说明 | 参数 |
 |------|------|------|------|
 | POST | `/api/register` | 注册 | `{"username":"", "password":""}` |
 | POST | `/api/login` | 登录 | `{"username":"", "password":""}` → 返回 `token` |
 | GET | `/api/users/online` | 在线用户 | → `{"ok":true, "users":[...]}` |
+| GET | `/health` | 健康检查 | → `{"status":"ok","mongo":"connected",...}` |
+
+### 文件上传（需登录）
+
+| 方法 | 路径 | 说明 | 参数 |
+|------|------|------|------|
+| POST | `/api/upload` | 上传文件 | `multipart/form-data`，字段 `file`，最大 10MB |
+
+支持格式：jpg/jpeg/png/gif/webp、pdf、doc/docx、txt、zip、mp3/mp4/wav
+
+返回：`{"ok":true, "url":"/uploads/xxx.jpg", "filename":"photo.jpg", "size":12345}`
+
+### 管理接口（需 admin 角色，Header: `Authorization: Bearer <token>`）
+
+| 方法 | 路径 | 说明 | 参数 |
+|------|------|------|------|
+| GET | `/api/admin/stats` | 系统统计 | → 在线用户数、房间数、详细列表 |
+| GET | `/api/admin/users` | 用户列表 | → 全部用户（ID、用户名、角色、在线状态） |
+| POST | `/api/admin/users/ban` | 封禁用户 | `{"user_id":"123"}` |
+| POST | `/api/admin/users/unban` | 解封用户 | `{"user_id":"123"}` |
 
 ## WebSocket 协议
 
@@ -245,15 +270,16 @@ GoChatX/
 │   │   ├── api.go             # REST API + 健康检查端点
 │   │   ├── clients.go         # WebSocket 客户端 + 在线用户管理
 │   │   ├── clients_test.go    # 客户端管理单元测试
-│   │   ├── middleware.go      # 速率限制 + CORS 中间件
+│   │   ├── middleware.go      # 速率限制 + CORS + 认证/管理呈权限中间件
 │   │   ├── room.go            # 房间管理（创建/加入/广播/离开）
 │   │   ├── room_test.go       # 房间管理单元测试
 │   │   └── ws_handle.go       # WebSocket 消息处理主逻辑
 │   └── storage/mango.go       # MongoDB 存储层（索引/错误处理）
 ├── web/
 │   ├── index.html             # 前端 SPA 页面
+│   ├── admin.html             # 管理后台页面
 │   ├── style.css              # 样式（暗色模式 + 响应式）
-│   └── app.js                 # 前端逻辑（指数退避重连/XSS 防护）
+│   └── app.js                 # 前端逻辑（文件上传/图片预览/指数退避重连）
 ├── migrations/                # 数据库迁移文件
 │   ├── 001_create_users.up.sql
 │   └── 001_create_users.down.sql
@@ -312,6 +338,42 @@ make docker-up
 curl https://localhost/health
 # {"status":"ok","mongo":"connected","redis":"connected","authsvc":"configured"}
 ```
+
+## 管理后台
+
+访问 `/admin.html`，使用管理员账号登录。
+
+### 功能
+
+- **系统概览** — 在线用户数、活跃房间数实时统计
+- **在线用户** — 当前在线用户列表
+- **活跃房间** — 当前活跃的聊天房间
+- **用户管理** — 全部用户列表，支持封禁/解封操作
+
+### 权限
+
+- 需要 `admin` 角色的用户才能访问
+- 管理员无法被封禁
+- 封禁用户会自动断开其 WebSocket 连接
+
+### 创建管理员
+
+```sql
+-- 直接在 MySQL 中将用户角色设为 admin
+UPDATE users SET role='admin' WHERE username='your_admin_user';
+```
+
+### 封禁文件类型
+
+| 类型 | 扩展名 |
+|------|--------|
+| 图片 | jpg, jpeg, png, gif, webp |
+| 文档 | pdf, doc, docx, txt |
+| 压缩 | zip |
+| 音频 | mp3, wav |
+| 视频 | mp4 |
+
+上传的文件存储在 `./uploads/` 目录，通过 `/uploads/` 路径访问。
 
 ## 降级策略
 
